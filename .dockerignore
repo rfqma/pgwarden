@@ -9,8 +9,8 @@
 vendor/
 
 # Build artifacts
-pgwarden
-pgwarden-*
+./pgwarden
+./pgwarden-*
 
 # Environment
 .env

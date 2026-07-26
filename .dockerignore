@@ -1,0 +1,52 @@
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+vendor/
+
+# Build artifacts
+pgwarden
+pgwarden-*
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Docker
+Dockerfile
+.dockerignore
+
+# Docs
+*.md
+LICENSE
+docs/
+
+# CI/CD
+.github/
+
+# Tests
+*_test.go
+test/
+tests/
+
+# Misc
+.DS_Store
+Thumbs.db
+*.log
+.scratch/

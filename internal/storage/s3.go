@@ -25,6 +25,20 @@ type BackupMetadata struct {
 	Duration  string    `json:"duration,omitempty"`
 }
 
+// endpointURL turns S3_ENDPOINT into the URL the client calls. A bare host
+// takes its scheme from S3_USE_SSL, so a local S3 server without TLS can be
+// used; an endpoint that already names its scheme is used as written.
+func endpointURL(endpoint string, useSSL bool) string {
+	endpoint = strings.TrimSuffix(endpoint, "/")
+	if strings.HasPrefix(endpoint, "http://") || strings.HasPrefix(endpoint, "https://") {
+		return endpoint
+	}
+	if useSSL {
+		return "https://" + endpoint
+	}
+	return "http://" + endpoint
+}
+
 type S3Storage struct {
 	client *s3.Client
 	bucket string
@@ -32,7 +46,7 @@ type S3Storage struct {
 }
 
 func New(cfg *s3config.S3Config) (*S3Storage, error) {
-	hostAddress := "https://" + cfg.Endpoint
+	hostAddress := endpointURL(cfg.Endpoint, cfg.UseSSL)
 
 	resolver := aws.EndpointResolverWithOptionsFunc(func(service, region string, options ...any) (aws.Endpoint, error) {
 		return aws.Endpoint{

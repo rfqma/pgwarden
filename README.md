@@ -500,4 +500,7 @@ docker run --rm --network host --env-file .env pgwarden:dev backup
 
 ## License
 
-Proprietary — All rights reserved.
+Copyright 2026 rfqma
+
+Licensed under the [Apache License, Version 2.0](LICENSE). You may use,
+modify and distribute pgwarden, including commercially, under its terms.

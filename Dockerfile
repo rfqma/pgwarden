@@ -52,7 +52,7 @@ LABEL org.opencontainers.image.title="pgwarden" \
       org.opencontainers.image.description="PostgreSQL backup guardian" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.source="https://github.com/rfqma/pgwarden" \
-      org.opencontainers.image.licenses="Proprietary"
+      org.opencontainers.image.licenses="Apache-2.0"
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD pgwarden health || exit 1

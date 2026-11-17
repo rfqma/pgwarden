@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -23,6 +24,13 @@ func NewServer(cfg *config.Config, store *storage.S3Storage) *Server {
 }
 
 func (s *Server) Start(ctx context.Context) error {
+	if s.cfg.API.Secret == "" {
+		if !s.cfg.API.Insecure {
+			return fmt.Errorf("API_SECRET is required: without it anyone who can reach the API can restore over or delete your backups (set API_INSECURE=true to run without auth, development only)")
+		}
+		fmt.Println("[pgwarden] WARNING: API_INSECURE=true, the API is running WITHOUT authentication")
+	}
+
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("POST /backup", s.handleBackup)
@@ -53,9 +61,11 @@ func (s *Server) Start(ctx context.Context) error {
 
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.cfg.API.Secret != "" {
+		// /health stays open so Docker and load balancers can probe it.
+		if s.cfg.API.Secret != "" && r.URL.Path != "/health" {
 			auth := r.Header.Get("Authorization")
-			if auth != "Bearer "+s.cfg.API.Secret {
+			want := "Bearer " + s.cfg.API.Secret
+			if subtle.ConstantTimeCompare([]byte(auth), []byte(want)) != 1 {
 				s.jsonError(w, "Unauthorized", http.StatusUnauthorized)
 				return
 			}
@@ -116,9 +126,9 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	backups := make([]map[string]interface{}, 0)
 	for _, obj := range objects {
 		backups = append(backups, map[string]interface{}{
-			"key":        *obj.Key,
-			"size":       obj.Size,
-			"modified":   obj.LastModified,
+			"key":      *obj.Key,
+			"size":     obj.Size,
+			"modified": obj.LastModified,
 		})
 	}
 

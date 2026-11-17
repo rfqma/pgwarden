@@ -202,10 +202,11 @@ curl -H "Authorization: Bearer your-api-secret" http://localhost:8080/backups
 
 ### Security
 
-| Variable         | Default | Description                          |
-| ---------------- | ------- | ------------------------------------ |
-| `GPG_PASSPHRASE` | —       | GPG encryption passphrase (required) |
-| `API_SECRET`     | —       | API auth secret (empty = no auth)    |
+| Variable         | Default | Description                                               |
+| ---------------- | ------- | --------------------------------------------------------- |
+| `GPG_PASSPHRASE` | —       | GPG encryption passphrase (required)                      |
+| `API_SECRET`     | —       | API auth secret (required by `serve`)                     |
+| `API_INSECURE`   | `false` | Let `serve` run without `API_SECRET` (development only)   |
 
 ### API Server
 
@@ -289,14 +290,15 @@ pgwarden runs as a non-root user by default:
 
 ### API Authentication
 
-The HTTP API supports optional authentication:
+`pgwarden serve` refuses to start without `API_SECRET`: an open API lets
+anyone who can reach the port restore over your database or delete your
+backups. `/health` is the only endpoint that needs no token.
 
 ```bash
-# Without auth (development only)
-docker run pgwarden serve
-
-# With auth
 docker run -e API_SECRET=my-secret pgwarden serve
+
+# Without auth (development only)
+docker run -e API_INSECURE=true pgwarden serve
 
 # All requests must include:
 curl -H "Authorization: Bearer my-secret" http://localhost:8080/backups

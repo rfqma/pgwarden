@@ -38,6 +38,9 @@ type BackupConfig struct {
 type APIConfig struct {
 	Port   string
 	Secret string
+	// Insecure lets the API server run without API_SECRET. Development only:
+	// without a secret anyone who reaches the port can restore or delete.
+	Insecure bool
 }
 
 func Load() (*Config, error) {
@@ -62,8 +65,9 @@ func Load() (*Config, error) {
 			GPGPassphrase: getEnv("GPG_PASSPHRASE", ""),
 		},
 		API: APIConfig{
-			Port:   getEnv("API_PORT", "8080"),
-			Secret: getEnv("API_SECRET", ""),
+			Port:     getEnv("API_PORT", "8080"),
+			Secret:   getEnv("API_SECRET", ""),
+			Insecure: getEnvBool("API_INSECURE", false),
 		},
 	}
 
@@ -115,4 +119,3 @@ func getEnvInt(key string, fallback int) int {
 	}
 	return i
 }
-

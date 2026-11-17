@@ -37,7 +37,7 @@ pgwarden is a lightweight Docker tool for PostgreSQL backup and restore. It uses
 - A GPG passphrase you keep somewhere safe. **Every restore needs it; if it is
   lost, the backups cannot be decrypted.**
 
-The image is published as `ghcr.io/rfqma/pgwarden` (`:0.2.1`, `:0.2`, `:latest`).
+The image is published as `ghcr.io/rfqma/pgwarden` (`:0.2.2`, `:0.2`, `:latest`).
 
 ### Single Docker Command
 
@@ -59,7 +59,7 @@ docker run --rm --network host \
   -e S3_SECRET_KEY=xx \
   -e S3_REGION=auto \
   -e GPG_PASSPHRASE \
-  ghcr.io/rfqma/pgwarden:0.2.1 backup
+  ghcr.io/rfqma/pgwarden:0.2.2 backup
 ```
 
 ### Docker Compose
@@ -80,7 +80,7 @@ services:
       retries: 10
 
   pgwarden:
-    image: ghcr.io/rfqma/pgwarden:0.2.1
+    image: ghcr.io/rfqma/pgwarden:0.2.2
     container_name: pgwarden
     depends_on:
       postgres:
@@ -454,7 +454,7 @@ Released images carry labels set by the release workflow
 
 ```yaml
 org.opencontainers.image.title: pgwarden
-org.opencontainers.image.version: 0.2.1          # the release
+org.opencontainers.image.version: 0.2.2          # the release
 org.opencontainers.image.revision: <commit SHA>
 org.opencontainers.image.source: https://github.com/rfqma/pgwarden
 org.opencontainers.image.licenses: Apache-2.0

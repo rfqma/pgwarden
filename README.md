@@ -175,16 +175,46 @@ Kubernetes CronJob, or a scheduled `POST /backup`.
 
 ## HTTP API
 
-| Method   | Endpoint        | Description         | Auth |
-| -------- | --------------- | ------------------- | ---- |
-| `GET`    | `/health`       | Health check        | No   |
-| `POST`   | `/backup`       | Create backup       | Yes  |
-| `POST`   | `/restore`      | Restore from backup | Yes  |
-| `GET`    | `/backups`      | List all backups    | Yes  |
-| `DELETE` | `/backups/{id}` | Delete backup       | Yes  |
+| Method   | Endpoint        | Description                     | Auth |
+| -------- | --------------- | ------------------------------- | ---- |
+| `GET`    | `/health`       | Health check                    | No   |
+| `POST`   | `/backup`       | Queue a backup (returns a job)  | Yes  |
+| `POST`   | `/restore`      | Queue a restore (returns a job) | Yes  |
+| `GET`    | `/jobs/{id}`    | Status and result of a job      | Yes  |
+| `GET`    | `/backups`      | List all backups                | Yes  |
+| `DELETE` | `/backups/{id}` | Delete backup                   | Yes  |
 
 All endpoints except `/health` need `Authorization: Bearer <API_SECRET>`;
 without it they answer `401`. An invalid backup ID answers `400`.
+
+### Jobs
+
+A backup or restore can take longer than any HTTP client or proxy will wait,
+so `POST /backup` and `POST /restore` do not wait for it. They answer
+`202 Accepted` at once with a job, and the work runs in the background.
+Poll `GET /jobs/{id}` (also given in the `Location` header) until `status`
+is `succeeded` or `failed`:
+
+| Field         | Description                                                       |
+| ------------- | ----------------------------------------------------------------- |
+| `job_id`      | Job ID                                                            |
+| `type`        | `backup` or `restore`                                             |
+| `status`      | `queued`, `running`, `succeeded` or `failed`                      |
+| `result`      | Backup only, once succeeded: `id`, `size`, `duration`, `checksum`, `created_at` |
+| `backup_id`   | Restore only: the backup being restored                           |
+| `error`       | Once failed: why                                                  |
+| `created_at`, `started_at`, `finished_at` | Timestamps                            |
+
+- Jobs run one at a time, in the order they were queued. A client that
+  disconnects or times out does not stop its job.
+- Up to 16 jobs can wait in the queue; beyond that `POST` answers `503`.
+- `POST /restore` answers `404` at once if the backup does not exist.
+- Job status lives in memory: the last 100 finished jobs are kept, and all
+  are lost when pgwarden restarts (`GET /jobs/{id}` then answers `404`).
+  The backups themselves are in the bucket; check `GET /backups`.
+- Stopping pgwarden (SIGTERM) cancels a running job. An interrupted restore
+  rolls back; an interrupted backup is not uploaded.
+- Every job is logged: `[pgwarden] job <id> backup succeeded after 40.1s`.
 
 ### Examples
 
@@ -195,25 +225,34 @@ AUTH="Authorization: Bearer $API_SECRET"
 curl http://localhost:8080/health
 # {"status":"ok"}
 
-# Create backup
+# Queue a backup
 curl -X POST -H "$AUTH" http://localhost:8080/backup
-# {"id":"20260726_071210","size":151018,"duration":"25.879631304s","checksum":"...","created_at":"..."}
+# 202 {"job_id":"a97a3638570173d36024713f","type":"backup","status":"queued","created_at":"..."}
+
+# Poll the job
+curl -H "$AUTH" http://localhost:8080/jobs/a97a3638570173d36024713f
+# {"job_id":"a97a3638570173d36024713f","type":"backup","status":"running",...}
+# {"job_id":"a97a3638570173d36024713f","type":"backup","status":"succeeded",
+#  "result":{"id":"20260726_071210","size":151018,"duration":"25.88s","checksum":"...","created_at":"..."},...}
 
 # List backups
 curl -H "$AUTH" http://localhost:8080/backups
 # [{"key":"pgwarden/backups/2026/07/20260726_071210.dump.gpg","size":151018,"modified":"..."}]
 
-# Restore from backup
+# Queue a restore, then poll its job the same way
 curl -X POST -H "$AUTH" http://localhost:8080/restore -H "Content-Type: application/json" -d '{"id":"20260726_071210"}'
-# {"status":"completed","id":"20260726_071210"}
+# 202 {"job_id":"ee9a1d3f3909e461b5de94db","type":"restore","status":"queued","backup_id":"20260726_071210",...}
 
 # Delete backup
 curl -X DELETE -H "$AUTH" http://localhost:8080/backups/20260726_071210
 # {"deleted":true,"id":"20260726_071210"}
 ```
 
-`POST /restore` replaces the current contents of the database (`pg_restore
+A restore replaces the current contents of the database (`pg_restore
 --clean`) in a single transaction.
+
+Before 0.3.0, `POST /backup` and `POST /restore` waited for the work and
+answered `200` with its result; clients written for that must now poll the job.
 
 ## Environment Variables
 
@@ -269,6 +308,7 @@ flowchart LR
 
     subgraph container["pgwarden container (UID 1000)"]
         api["HTTP API :8080<br/>Bearer API_SECRET<br/>/health is open"]
+        jobs["job queue<br/>one job at a time"]
         core["backup / restore"]
         tools["pg_dump / pg_restore 16"]
         gpg["gpg AES-256<br/>passphrase on fd 3"]
@@ -279,7 +319,7 @@ flowchart LR
     s3[("S3-compatible bucket")]
 
     cli --> core
-    http --> api --> core
+    http --> api --> jobs --> core
     core --> tools <--> pg
     core --> gpg
     core --> store <--> s3
@@ -303,14 +343,14 @@ sequenceDiagram
     participant S as S3 bucket
 
     U->>W: pgwarden backup / POST /backup
-    Note over W: API: check Bearer token
+    Note over U,W: API: check Bearer token, answer 202 with a job,<br/>run the rest in the background (poll GET /jobs/ID)
     W->>D: pg_dump -Fc --no-owner --no-privileges
     D->>P: read database
     D-->>W: dump, held in memory
     W->>G: dump on stdin, passphrase on fd 3
     G-->>W: encrypted dump (AES-256)
     W->>S: PUT prefix/backups/YYYY/MM/ID.dump.gpg
-    W-->>U: id, size, duration, checksum
+    W-->>U: id, size, duration, checksum (CLI output, or the job's result)
 ```
 
 ### Restore Flow
@@ -326,14 +366,14 @@ sequenceDiagram
     participant P as PostgreSQL
 
     U->>W: pgwarden restore --id ID / POST /restore
-    Note over W: API: check Bearer token<br/>validate ID (YYYYMMDD_HHMMSS)
+    Note over U,W: validate ID (YYYYMMDD_HHMMSS)<br/>API: check Bearer token and that the backup exists,<br/>answer 202 with a job, run the rest in the background
     W->>S: GET prefix/backups/YYYY/MM/ID.dump.gpg
     S-->>W: encrypted dump, held in memory
     W->>G: encrypted dump on stdin, passphrase on fd 3
     G-->>W: decrypted dump
     W->>R: dump on stdin
     R->>P: --clean --if-exists --single-transaction
-    W-->>U: status completed
+    W-->>U: done (CLI exits, or the job is succeeded)
 ```
 
 Each step works on the whole file in memory: the dump and its encrypted

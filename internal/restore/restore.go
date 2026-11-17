@@ -16,8 +16,10 @@ import (
 func Run(ctx context.Context, cfg *config.Config, store *storage.S3Storage, backupID string) error {
 	start := time.Now()
 
-	dumpKey := fmt.Sprintf("backups/%s/%s.dump.gpg",
-		backupID[:4]+"/"+backupID[4:6], backupID)
+	dumpKey, err := storage.BackupKey(backupID)
+	if err != nil {
+		return err
+	}
 
 	reader, err := store.Download(ctx, dumpKey)
 	if err != nil {

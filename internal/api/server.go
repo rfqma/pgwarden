@@ -104,6 +104,10 @@ func (s *Server) handleRestore(w http.ResponseWriter, r *http.Request) {
 		s.jsonError(w, "id is required", http.StatusBadRequest)
 		return
 	}
+	if _, err := storage.BackupKey(req.ID); err != nil {
+		s.jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	if err := restore.Run(r.Context(), s.cfg, s.store, req.ID); err != nil {
 		s.jsonError(w, err.Error(), http.StatusInternalServerError)
@@ -142,8 +146,11 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	key := fmt.Sprintf("backups/%s/%s.dump.gpg",
-		id[:4]+"/"+id[4:6], id)
+	key, err := storage.BackupKey(id)
+	if err != nil {
+		s.jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	if err := s.store.Delete(r.Context(), key); err != nil {
 		s.jsonError(w, err.Error(), http.StatusInternalServerError)

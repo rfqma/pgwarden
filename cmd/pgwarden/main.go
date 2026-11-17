@@ -164,8 +164,10 @@ func deleteCmd(ctx context.Context) *cobra.Command {
 				return err
 			}
 
-			key := fmt.Sprintf("backups/%s/%s.dump.gpg",
-				backupID[:4]+"/"+backupID[4:6], backupID)
+			key, err := storage.BackupKey(backupID)
+			if err != nil {
+				return err
+			}
 
 			if err := store.Delete(ctx, key); err != nil {
 				return err

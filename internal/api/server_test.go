@@ -59,3 +59,30 @@ func TestAuthMiddleware(t *testing.T) {
 		})
 	}
 }
+
+func TestInvalidBackupIDIsBadRequest(t *testing.T) {
+	s := newTestServer("s3cret", false)
+	tests := []struct {
+		name    string
+		method  string
+		pattern string
+		path    string
+		body    string
+		handler http.HandlerFunc
+	}{
+		{"delete short id", http.MethodDelete, "DELETE /backups/{id}", "/backups/12", "", s.handleDelete},
+		{"restore short id", http.MethodPost, "POST /restore", "/restore", `{"id":"12"}`, s.handleRestore},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mux := http.NewServeMux()
+			mux.HandleFunc(tt.pattern, tt.handler)
+			req := httptest.NewRequest(tt.method, tt.path, strings.NewReader(tt.body))
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400 (body %s)", rec.Code, rec.Body)
+			}
+		})
+	}
+}

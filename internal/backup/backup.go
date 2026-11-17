@@ -24,10 +24,12 @@ type Result struct {
 
 func Run(ctx context.Context, cfg *config.Config, store *storage.S3Storage) (*Result, error) {
 	start := time.Now()
-	backupID := start.Format("20060102_150405")
+	backupID := start.Format(storage.BackupIDLayout)
 
-	dumpKey := fmt.Sprintf("backups/%s/%s.dump.gpg",
-		start.Format("2006/01"), backupID)
+	dumpKey, err := storage.BackupKey(backupID)
+	if err != nil {
+		return nil, err
+	}
 
 	args := []string{
 		"-Fc",

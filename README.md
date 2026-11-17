@@ -165,6 +165,11 @@ pgwarden backup --help
 Backup IDs have the form `YYYYMMDD_HHMMSS` (the time the backup started).
 `restore` and `delete` reject anything else.
 
+One pgwarden process runs backups one at a time and never reuses an ID. A
+backup from another process (the CLI next to the API, or a second replica)
+that lands on an ID already in the bucket fails with "already exists"
+instead of overwriting it; run it again.
+
 pgwarden has no built-in scheduler. Run `pgwarden backup` from cron, a
 Kubernetes CronJob, or a scheduled `POST /backup`.
 

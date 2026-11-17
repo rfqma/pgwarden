@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os/exec"
+	"sync"
 	"time"
 
 	"github.com/maruarchive/pgwarden/internal/config"
@@ -22,9 +23,33 @@ type Result struct {
 	CreatedAt time.Time
 }
 
+var (
+	// mu serializes backups in this process, so two requests cannot share
+	// an ID (IDs have one-second resolution) or hold two dumps in memory.
+	mu     sync.Mutex
+	lastID string
+)
+
+// nextID returns the time and ID for a new backup. If the clock is still in
+// the second of the previous backup, it waits for the next second, so IDs
+// handed out by one process never repeat. Callers must hold mu.
+func nextID(now func() time.Time, sleep func(time.Duration)) (time.Time, string) {
+	t := now()
+	id := t.Format(storage.BackupIDLayout)
+	if id == lastID {
+		sleep(t.Truncate(time.Second).Add(time.Second).Sub(t))
+		t = now()
+		id = t.Format(storage.BackupIDLayout)
+	}
+	lastID = id
+	return t, id
+}
+
 func Run(ctx context.Context, cfg *config.Config, store *storage.S3Storage) (*Result, error) {
-	start := time.Now()
-	backupID := start.Format(storage.BackupIDLayout)
+	mu.Lock()
+	defer mu.Unlock()
+
+	start, backupID := nextID(time.Now, time.Sleep)
 
 	dumpKey, err := storage.BackupKey(backupID)
 	if err != nil {
@@ -67,6 +92,16 @@ func Run(ctx context.Context, cfg *config.Config, store *storage.S3Storage) (*Re
 
 	checksum := sha256.Sum256(dumpData)
 	checksumStr := hex.EncodeToString(checksum[:])
+
+	// Another pgwarden process (the CLI next to the API, or a second
+	// replica) may have made a backup in the same second. Never overwrite it.
+	exists, err := store.Exists(ctx, dumpKey)
+	if err != nil {
+		return nil, fmt.Errorf("S3 check failed: %w", err)
+	}
+	if exists {
+		return nil, fmt.Errorf("backup %s already exists (another pgwarden made a backup in the same second); not overwriting it, try again", backupID)
+	}
 
 	reader := bytes.NewReader(encrypted)
 	if err := store.Upload(ctx, dumpKey, reader, dumpSize); err != nil {

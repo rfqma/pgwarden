@@ -222,6 +222,11 @@ curl -X DELETE -H "$AUTH" http://localhost:8080/backups/20260726_071210
 | `PGPASSWORD` | —           | PostgreSQL password |
 | `PGDATABASE` | `postgres`  | PostgreSQL database |
 
+Other [libpq variables](https://www.postgresql.org/docs/16/libpq-envars.html)
+such as `PGSSLMODE`, `PGSSLROOTCERT` or `PGCONNECT_TIMEOUT` are passed to
+`pg_dump` and `pg_restore` as set. pgwarden's own secrets (`GPG_PASSPHRASE`,
+`S3_ACCESS_KEY`, `S3_SECRET_KEY`, `API_SECRET`) are not.
+
 ### S3 Storage
 
 | Variable        | Default            | Description                                                                 |

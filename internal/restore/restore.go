@@ -54,9 +54,7 @@ func Run(ctx context.Context, cfg *config.Config, store *storage.S3Storage, back
 		return fmt.Errorf("pg_restore not found: %w", err)
 	}
 	cmd := exec.CommandContext(ctx, pgRestorePath, args...)
-	cmd.Env = append(cmd.Env,
-		fmt.Sprintf("PGPASSWORD=%s", cfg.Postgres.Password),
-	)
+	cmd.Env = cfg.Postgres.Env()
 	cmd.Stdin = bytes.NewReader(decrypted)
 
 	var stderr bytes.Buffer

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 )
 
 type Config struct {
@@ -80,6 +81,38 @@ func Load() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// secretEnv are pgwarden's own secrets, which pg_dump and pg_restore have no
+// use for and so do not inherit.
+var secretEnv = map[string]bool{
+	"GPG_PASSPHRASE": true,
+	"S3_ACCESS_KEY":  true,
+	"S3_SECRET_KEY":  true,
+	"API_SECRET":     true,
+}
+
+// Env returns the environment for pg_dump and pg_restore. It keeps
+// pgwarden's own environment, so libpq settings such as PGSSLMODE,
+// PGSSLROOTCERT, PGOPTIONS and PGCONNECT_TIMEOUT (and HOME, for ~/.pgpass)
+// reach them, drops pgwarden's secrets, and sets PGPASSWORD from the config.
+func (c *PostgreSQLConfig) Env() []string {
+	return childEnv(os.Environ(), c.Password)
+}
+
+func childEnv(environ []string, password string) []string {
+	env := make([]string, 0, len(environ)+1)
+	for _, kv := range environ {
+		key, _, _ := strings.Cut(kv, "=")
+		if secretEnv[key] || key == "PGPASSWORD" {
+			continue
+		}
+		env = append(env, kv)
+	}
+	if password != "" {
+		env = append(env, "PGPASSWORD="+password)
+	}
+	return env
 }
 
 func (c *PostgreSQLConfig) DSN() string {

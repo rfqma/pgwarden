@@ -46,9 +46,7 @@ func Run(ctx context.Context, cfg *config.Config, store *storage.S3Storage) (*Re
 		return nil, fmt.Errorf("pg_dump not found: %w", err)
 	}
 	cmd := exec.CommandContext(ctx, pgDumpPath, args...)
-	cmd.Env = append(cmd.Env,
-		fmt.Sprintf("PGPASSWORD=%s", cfg.Postgres.Password),
-	)
+	cmd.Env = cfg.Postgres.Env()
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/maruarchive/pgwarden/internal/config"
+	"github.com/maruarchive/pgwarden/internal/gpg"
 	"github.com/maruarchive/pgwarden/internal/storage"
 )
 
@@ -57,7 +58,7 @@ func Run(ctx context.Context, cfg *config.Config, store *storage.S3Storage) (*Re
 
 	dumpData := stdout.Bytes()
 
-	encrypted, err := encrypt(dumpData, cfg.Backup.GPGPassphrase)
+	encrypted, err := gpg.Encrypt(dumpData, cfg.Backup.GPGPassphrase)
 	if err != nil {
 		return nil, fmt.Errorf("encryption failed: %w", err)
 	}
@@ -86,44 +87,4 @@ func Run(ctx context.Context, cfg *config.Config, store *storage.S3Storage) (*Re
 		backupID, dumpSize, duration.Round(time.Millisecond))
 
 	return result, nil
-}
-
-func encrypt(data []byte, passphrase string) ([]byte, error) {
-	cmd := exec.Command("gpg",
-		"--batch",
-		"--yes",
-		"--symmetric",
-		"--cipher-algo", "AES256",
-		"--passphrase", passphrase,
-		"--output", "-",
-	)
-
-	cmd.Stdin = bytes.NewReader(data)
-	var out bytes.Buffer
-	cmd.Stdout = &out
-
-	if err := cmd.Run(); err != nil {
-		return nil, err
-	}
-
-	return out.Bytes(), nil
-}
-
-func decrypt(data []byte, passphrase string) ([]byte, error) {
-	cmd := exec.Command("gpg",
-		"--batch",
-		"--yes",
-		"--decrypt",
-		"--passphrase", passphrase,
-	)
-
-	cmd.Stdin = bytes.NewReader(data)
-	var out bytes.Buffer
-	cmd.Stdout = &out
-
-	if err := cmd.Run(); err != nil {
-		return nil, err
-	}
-
-	return out.Bytes(), nil
 }

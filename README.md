@@ -270,6 +270,7 @@ backups/
 - **Key derivation:** GPG standard (S2K)
 - **Format:** GPG binary format
 - **No plaintext option** — `GPG_PASSPHRASE` is mandatory
+- **Passphrase never on the command line** — it reaches gpg over a pipe (`--passphrase-fd`), so it does not appear in `ps` or `/proc/<pid>/cmdline`
 
 ```bash
 # Backup is encrypted in transit and at rest

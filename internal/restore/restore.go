@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/maruarchive/pgwarden/internal/config"
+	"github.com/maruarchive/pgwarden/internal/gpg"
 	"github.com/maruarchive/pgwarden/internal/storage"
 )
 
@@ -29,7 +30,7 @@ func Run(ctx context.Context, cfg *config.Config, store *storage.S3Storage, back
 		return fmt.Errorf("failed to read backup: %w", err)
 	}
 
-	decrypted, err := decrypt(dumpData, cfg.Backup.GPGPassphrase)
+	decrypted, err := gpg.Decrypt(dumpData, cfg.Backup.GPGPassphrase)
 	if err != nil {
 		return fmt.Errorf("decryption failed: %w", err)
 	}
@@ -67,23 +68,4 @@ func Run(ctx context.Context, cfg *config.Config, store *storage.S3Storage, back
 		backupID, time.Since(start).Round(time.Millisecond))
 
 	return nil
-}
-
-func decrypt(data []byte, passphrase string) ([]byte, error) {
-	cmd := exec.Command("gpg",
-		"--batch",
-		"--yes",
-		"--decrypt",
-		"--passphrase", passphrase,
-	)
-
-	cmd.Stdin = bytes.NewReader(data)
-	var out bytes.Buffer
-	cmd.Stdout = &out
-
-	if err := cmd.Run(); err != nil {
-		return nil, err
-	}
-
-	return out.Bytes(), nil
 }

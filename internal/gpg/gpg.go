@@ -10,7 +10,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
+	"sync"
 )
 
 // passphraseFD is the file descriptor gpg reads the passphrase from. The
@@ -27,11 +29,29 @@ func Decrypt(data []byte, passphrase string) ([]byte, error) {
 	return run(data, passphrase, "--decrypt")
 }
 
+// homeOnce creates gpg's home directory before the first gpg runs. Two gpg
+// processes started together on a fresh home both try to create it, and the
+// loser fails with "can't create directory ... File exists".
+var homeOnce sync.Once
+
+func ensureHome() {
+	dir := os.Getenv("GNUPGHOME")
+	if dir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return // let gpg report it
+		}
+		dir = filepath.Join(home, ".gnupg")
+	}
+	os.MkdirAll(dir, 0o700)
+}
+
 func run(data []byte, passphrase string, op ...string) ([]byte, error) {
 	gpgPath, err := exec.LookPath("gpg")
 	if err != nil {
 		return nil, fmt.Errorf("gpg not found: %w", err)
 	}
+	homeOnce.Do(ensureHome)
 
 	pr, pw, err := os.Pipe()
 	if err != nil {

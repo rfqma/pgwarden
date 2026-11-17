@@ -250,29 +250,80 @@ curl -X DELETE -H "$AUTH" http://localhost:8080/backups/20260726_071210
 
 ## Architecture
 
+### Overview
+
+```mermaid
+flowchart LR
+    cli["CLI<br/>pgwarden backup, restore,<br/>list, delete"]
+    http["HTTP client<br/>web app, scheduler"]
+
+    subgraph container["pgwarden container (UID 1000)"]
+        api["HTTP API :8080<br/>Bearer API_SECRET<br/>/health is open"]
+        core["backup / restore"]
+        tools["pg_dump / pg_restore 16"]
+        gpg["gpg AES-256<br/>passphrase on fd 3"]
+        store["S3 client"]
+    end
+
+    pg[("PostgreSQL")]
+    s3[("S3-compatible bucket")]
+
+    cli --> core
+    http --> api --> core
+    core --> tools <--> pg
+    core --> gpg
+    core --> store <--> s3
+```
+
+pgwarden is one binary in one container. Backups are triggered from the CLI
+or the HTTP API (or a scheduler calling either); there is no built-in schedule.
+It shells out to `pg_dump`, `pg_restore` and `gpg`, and talks to the bucket
+with the AWS SDK. Backup data is never written to local disk.
+
 ### Backup Flow
 
-```
-┌─────────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│                 │     │             │     │             │     │             │
-│   pgwarden      │────▶│  pg_dump    │────▶│  GPG        │────▶│  S3/R2/MinIO│
-│   (Docker)      │     │  (in memory)│     │  encrypt    │     │  upload     │
-│                 │     │             │     │  (AES-256)  │     │             │
-└─────────────────┘     └─────────────┘     └─────────────┘     └─────────────┘
-         ▲                                                           │
-         │                                                           │
-         └──────────── CLI or HTTP API ─────────────────────────────┘
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as CLI or HTTP client
+    participant W as pgwarden
+    participant D as pg_dump
+    participant P as PostgreSQL
+    participant G as gpg
+    participant S as S3 bucket
+
+    U->>W: pgwarden backup / POST /backup
+    Note over W: API: check Bearer token
+    W->>D: pg_dump -Fc --no-owner --no-privileges
+    D->>P: read database
+    D-->>W: dump, held in memory
+    W->>G: dump on stdin, passphrase on fd 3
+    G-->>W: encrypted dump (AES-256)
+    W->>S: PUT prefix/backups/YYYY/MM/ID.dump.gpg
+    W-->>U: id, size, duration, checksum
 ```
 
 ### Restore Flow
 
-```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│             │     │             │     │             │     │             │
-│  S3/R2/     │────▶│  Download   │────▶│  GPG        │────▶│  pg_restore │
-│  MinIO      │     │  .dump.gpg  │     │  decrypt    │     │  (stdin)    │
-│             │     │             │     │             │     │             │
-└─────────────┘     └─────────────┘     └─────────────┘     └─────────────┘
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as CLI or HTTP client
+    participant W as pgwarden
+    participant S as S3 bucket
+    participant G as gpg
+    participant R as pg_restore
+    participant P as PostgreSQL
+
+    U->>W: pgwarden restore --id ID / POST /restore
+    Note over W: API: check Bearer token<br/>validate ID (YYYYMMDD_HHMMSS)
+    W->>S: GET prefix/backups/YYYY/MM/ID.dump.gpg
+    S-->>W: encrypted dump, held in memory
+    W->>G: encrypted dump on stdin, passphrase on fd 3
+    G-->>W: decrypted dump
+    W->>R: dump on stdin
+    R->>P: --clean --if-exists --single-transaction
+    W-->>U: status completed
 ```
 
 Each step works on the whole file in memory: the dump and its encrypted
@@ -406,6 +457,7 @@ org.opencontainers.image.title: pgwarden
 org.opencontainers.image.version: 0.2.1          # the release
 org.opencontainers.image.revision: <commit SHA>
 org.opencontainers.image.source: https://github.com/rfqma/pgwarden
+org.opencontainers.image.licenses: Apache-2.0
 org.opencontainers.image.created: <build time>
 ```
 

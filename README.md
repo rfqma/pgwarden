@@ -6,8 +6,8 @@ pgwarden is a lightweight Docker tool for PostgreSQL backup and restore. It uses
 
 - **Docker-first**: Single container, runs anywhere Docker runs
 - **Mandatory encryption**: All backups encrypted with GPG AES-256, no plaintext option
-- **Non-root by default**: Runs as UID 1000, no privilege escalation
-- **Lightweight**: Alpine-based image, ~64MB
+- **Non-root by default**: Runs as UID 1000
+- **Lightweight**: Alpine-based image, ~18MB download
 - **S3-compatible**: Works with any S3-compatible storage, not just AWS
 - **Simple**: One binary, no complex configuration, no dependencies
 - **HTTP API**: Trigger backup/restore from web apps
@@ -21,9 +21,9 @@ pgwarden is a lightweight Docker tool for PostgreSQL backup and restore. It uses
 - **HTTP API**: For integration with web apps
 - **CLI**: Manual backup, restore, list, delete
 - **Mandatory GPG encryption**: All backups encrypted with AES-256 (no plaintext option)
-- **Non-root user**: Runs as `pgwarden` (UID 1000), no privilege escalation
-- **Lightweight image**: Alpine-based Docker image, ~64MB
-- **Built-in health check**: HTTP `/health` endpoint for Docker HEALTHCHECK
+- **Non-root user**: Runs as `pgwarden` (UID 1000)
+- **Lightweight image**: Alpine-based Docker image, ~18MB download (~64MB unpacked)
+- **Health endpoint**: HTTP `/health` for monitoring and load balancers
 - **OCI labels**: Container metadata for registries
 
 ## Quick Start
@@ -31,12 +31,21 @@ pgwarden is a lightweight Docker tool for PostgreSQL backup and restore. It uses
 ### Prerequisites
 
 - Docker installed
-- PostgreSQL accessible from Docker (host network or Docker network)
+- PostgreSQL 16 or older, accessible from Docker (host network or Docker network).
+  The image ships `pg_dump` 16, which cannot dump a newer server.
 - S3-compatible storage (AWS S3, R2, MinIO, etc.)
+- A GPG passphrase you keep somewhere safe. **Every restore needs it; if it is
+  lost, the backups cannot be decrypted.**
+
+The image is published as `ghcr.io/rfqma/pgwarden` (`:0.2.0`, `:0.2`, `:latest`).
 
 ### Single Docker Command
 
 ```bash
+# Generate the passphrase once and store it (password manager, secret store).
+# Do not generate it inline in the command: you need the same one to restore.
+export GPG_PASSPHRASE='your-stored-passphrase'
+
 docker run --rm --network host \
   -e PGHOST=localhost \
   -e PGPORT=5432 \
@@ -49,8 +58,8 @@ docker run --rm --network host \
   -e S3_ACCESS_KEY=xx \
   -e S3_SECRET_KEY=xx \
   -e S3_REGION=auto \
-  -e GPG_PASSPHRASE=$(openssl rand -base64 32) \
-  pgwarden:distroless backup
+  -e GPG_PASSPHRASE \
+  ghcr.io/rfqma/pgwarden:0.2.0 backup
 ```
 
 ### Docker Compose
@@ -64,39 +73,52 @@ services:
     environment:
       POSTGRES_DB: mydb
       POSTGRES_PASSWORD: secret
-    ports:
-      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d mydb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   pgwarden:
-    build: .
+    image: ghcr.io/rfqma/pgwarden:0.2.0
     container_name: pgwarden
     depends_on:
       postgres:
         condition: service_healthy
     env_file:
       - .env
+    environment:
+      # Inside Compose, Postgres is reached by its service name.
+      PGHOST: postgres
+      PGUSER: postgres
+      PGPASSWORD: secret
+      PGDATABASE: mydb
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     healthcheck:
-      test: ["CMD", "pgwarden", "health"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 10s
 ```
 
+The container runs `pgwarden serve` by default, which requires `API_SECRET`.
+Port 8080 is bound to localhost only; expose it further only behind TLS.
+
 Run with:
 
 ```bash
 # Set env vars (copy from .env.example)
 cp .env.example .env
-# Edit .env with your credentials
+# Edit .env: S3_*, GPG_PASSPHRASE and API_SECRET
+# (openssl rand -base64 32 for API_SECRET)
 
 # Start services
 docker compose up -d
 
-# Run backup
-docker compose exec pgwarden pgwarden backup
+# Run a one-off backup
+docker compose run --rm pgwarden backup
 ```
 
 ### Local Binary (Development)
@@ -131,13 +153,20 @@ pgwarden delete --id 20260726_071210
 # Start HTTP API server
 pgwarden serve
 
-# Health check
+# Liveness check: prints "ok" if the binary runs.
+# It does not check PostgreSQL, S3 or the API server.
 pgwarden health
 
 # Show help
 pgwarden --help
 pgwarden backup --help
 ```
+
+Backup IDs have the form `YYYYMMDD_HHMMSS` (the time the backup started).
+`restore` and `delete` reject anything else.
+
+pgwarden has no built-in scheduler. Run `pgwarden backup` from cron, a
+Kubernetes CronJob, or a scheduled `POST /backup`.
 
 ## HTTP API
 
@@ -149,32 +178,37 @@ pgwarden backup --help
 | `GET`    | `/backups`      | List all backups    | Yes  |
 | `DELETE` | `/backups/{id}` | Delete backup       | Yes  |
 
+All endpoints except `/health` need `Authorization: Bearer <API_SECRET>`;
+without it they answer `401`. An invalid backup ID answers `400`.
+
 ### Examples
 
 ```bash
-# Health check
+AUTH="Authorization: Bearer $API_SECRET"
+
+# Health check (no token)
 curl http://localhost:8080/health
 # {"status":"ok"}
 
 # Create backup
-curl -X POST http://localhost:8080/backup
+curl -X POST -H "$AUTH" http://localhost:8080/backup
 # {"id":"20260726_071210","size":151018,"duration":"25.879631304s","checksum":"...","created_at":"..."}
 
 # List backups
-curl http://localhost:8080/backups
+curl -H "$AUTH" http://localhost:8080/backups
 # [{"key":"pgwarden/backups/2026/07/20260726_071210.dump.gpg","size":151018,"modified":"..."}]
 
 # Restore from backup
-curl -X POST http://localhost:8080/restore -H "Content-Type: application/json" -d '{"id":"20260726_071210"}'
+curl -X POST -H "$AUTH" http://localhost:8080/restore -H "Content-Type: application/json" -d '{"id":"20260726_071210"}'
 # {"status":"completed","id":"20260726_071210"}
 
 # Delete backup
-curl -X DELETE http://localhost:8080/backups/20260726_071210
+curl -X DELETE -H "$AUTH" http://localhost:8080/backups/20260726_071210
 # {"deleted":true,"id":"20260726_071210"}
-
-# With auth
-curl -H "Authorization: Bearer your-api-secret" http://localhost:8080/backups
 ```
+
+`POST /restore` replaces the current contents of the database (`pg_restore
+--clean`) in a single transaction.
 
 ## Environment Variables
 
@@ -190,15 +224,15 @@ curl -H "Authorization: Bearer your-api-secret" http://localhost:8080/backups
 
 ### S3 Storage
 
-| Variable        | Default            | Description                      |
-| --------------- | ------------------ | -------------------------------- |
-| `S3_ENDPOINT`   | `s3.amazonaws.com` | S3 endpoint hostname             |
-| `S3_BUCKET`     | —                  | S3 bucket name (required)        |
-| `S3_PREFIX`     | `pgwarden`         | S3 key prefix for backups        |
-| `S3_REGION`     | —                  | S3 region (auto-detect if empty) |
-| `S3_ACCESS_KEY` | —                  | S3 access key                    |
-| `S3_SECRET_KEY` | —                  | S3 secret key                    |
-| `S3_USE_SSL`    | `true`             | Use SSL for S3 connections       |
+| Variable        | Default            | Description                                                                 |
+| --------------- | ------------------ | --------------------------------------------------------------------------- |
+| `S3_ENDPOINT`   | `s3.amazonaws.com` | Host (e.g. `minio:9000`) or full URL with `http://` / `https://`            |
+| `S3_BUCKET`     | —                  | S3 bucket name (required)                                                   |
+| `S3_PREFIX`     | `pgwarden`         | Key prefix for backups                                                      |
+| `S3_REGION`     | —                  | Region used to sign requests. Not detected: set it for AWS S3; `auto` for R2 |
+| `S3_ACCESS_KEY` | —                  | S3 access key                                                               |
+| `S3_SECRET_KEY` | —                  | S3 secret key                                                               |
+| `S3_USE_SSL`    | `true`             | Scheme for an `S3_ENDPOINT` without one: `https` if true, `http` if false   |
 
 ### Security
 
@@ -222,7 +256,7 @@ curl -H "Authorization: Bearer your-api-secret" http://localhost:8080/backups
 ┌─────────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
 │                 │     │             │     │             │     │             │
 │   pgwarden      │────▶│  pg_dump    │────▶│  GPG        │────▶│  S3/R2/MinIO│
-│   (Docker)      │     │  (pipe)     │     │  encrypt    │     │  upload     │
+│   (Docker)      │     │  (in memory)│     │  encrypt    │     │  upload     │
 │                 │     │             │     │  (AES-256)  │     │             │
 └─────────────────┘     └─────────────┘     └─────────────┘     └─────────────┘
          ▲                                                           │
@@ -236,28 +270,33 @@ curl -H "Authorization: Bearer your-api-secret" http://localhost:8080/backups
 ┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
 │             │     │             │     │             │     │             │
 │  S3/R2/     │────▶│  Download   │────▶│  GPG        │────▶│  pg_restore │
-│  MinIO      │     │  .dump.gpg  │     │  decrypt    │     │  (pipe)     │
+│  MinIO      │     │  .dump.gpg  │     │  decrypt    │     │  (stdin)    │
 │             │     │             │     │             │     │             │
 └─────────────┘     └─────────────┘     └─────────────┘     └─────────────┘
 ```
+
+Each step works on the whole file in memory: the dump and its encrypted
+copy are both held at once, as are the download and its decrypted copy.
+Give the container at least about twice the size of a dump in memory.
 
 ### Backup File Format
 
 All backups are stored as `.dump.gpg` files:
 
 ```
-backups/
-├── 2026/
-│   └── 07/
-│       ├── 20260726_071210.dump.gpg
-│       ├── 20260726_081200.dump.gpg
-│       └── 20260726_091200.dump.gpg
-└── 2026/
-    └── 08/
-        └── ...
+<bucket>/
+└── pgwarden/                  ← S3_PREFIX
+    └── backups/
+        └── 2026/
+            ├── 07/
+            │   ├── 20260726_071210.dump.gpg
+            │   ├── 20260726_081200.dump.gpg
+            │   └── 20260726_091200.dump.gpg
+            └── 08/
+                └── ...
 ```
 
-**File naming:** `backups/{YYYY}/{MM}/{YYYYMMDD_HHMMSS}.dump.gpg`
+**File naming:** `{S3_PREFIX}/backups/{YYYY}/{MM}/{YYYYMMDD_HHMMSS}.dump.gpg`
 
 **File format:** pg_dump custom format (`-Fc`), encrypted with GPG AES-256
 
@@ -274,7 +313,7 @@ backups/
 - **Passphrase never on the command line** — it reaches gpg over a pipe (`--passphrase-fd`), so it does not appear in `ps` or `/proc/<pid>/cmdline`
 
 ```bash
-# Backup is encrypted in transit and at rest
+# The dump is encrypted before it leaves the container
 pgwarden backup
 # → Creates .dump.gpg file in S3
 ```
@@ -285,8 +324,11 @@ pgwarden runs as a non-root user by default:
 
 - **User:** `pgwarden` (UID 1000)
 - **Group:** `pgwarden` (GID 1000)
-- **No shell:** `/sbin/nologin`
+- **Shell:** `/bin/sh` (Alpine `adduser` default)
 - **Home:** `/home/pgwarden`
+
+The image does not block privilege escalation by itself; add
+`--security-opt no-new-privileges` (or `security_opt` in Compose) for that.
 
 ### API Authentication
 
@@ -316,15 +358,22 @@ curl -H "Authorization: Bearer my-secret" http://localhost:8080/backups
    - Use Docker secrets, Kubernetes secrets, or `.env` files (not in code)
    - Never commit `.env` files to Git
 
-3. **Use HTTPS for S3:**
+3. **Keep the API private:**
+   - Always set `API_SECRET`; bind the port to localhost or a private network
+   - Put TLS in front of it if it must cross a network
+
+4. **Use HTTPS for S3:**
    - Set `S3_USE_SSL=true` (default)
    - Use cloud provider TLS endpoints
 
-4. **Rotate passphrases periodically:**
-   - Old backups will still be decryptable with old passphrase
-   - New backups use new passphrase
+5. **Rotating the passphrase:**
+   - pgwarden uses one `GPG_PASSPHRASE` for both backup and restore, and does
+     not record which passphrase encrypted which backup
+   - After rotating, keep the old passphrase and note the date you switched
+   - To restore a backup from before that date, run `restore` with
+     `GPG_PASSPHRASE` set to the old passphrase
 
-5. **Backup your passphrase:**
+6. **Back up your passphrase:**
    - Store in password manager
    - Keep offline backup in secure location
    - **If lost, backups are unrecoverable**
@@ -334,34 +383,41 @@ curl -H "Authorization: Bearer my-secret" http://localhost:8080/backups
 ### Base
 
 - **Base image:** `alpine:3.20`
-- **Final image:** ~64MB (compressed)
+- **Final image:** ~18MB download, ~64MB unpacked
 - **Runtime:** pg_dump, pg_restore, gpg
+- **Platforms:** `linux/amd64`, `linux/arm64`
 
 ### Components
 
 | Component         | Source            | Version |
 | ----------------- | ----------------- | ------- |
 | Go binary         | Build from source | 1.25+   |
-| PostgreSQL client | Alpine packages   | 16.x    |
+| PostgreSQL client | Alpine packages   | 16.x (dumps servers up to 16) |
 | GPG               | Alpine packages   | 2.4+    |
 | CA certificates   | Alpine            | Latest  |
 
 ### OCI Labels
 
+Released images carry labels set by the release workflow
+(`docker/metadata-action`), including:
+
 ```yaml
 org.opencontainers.image.title: pgwarden
-org.opencontainers.image.description: PostgreSQL backup guardian
-org.opencontainers.image.version: dev
+org.opencontainers.image.version: 0.2.0          # the release
+org.opencontainers.image.revision: <commit SHA>
 org.opencontainers.image.source: https://github.com/rfqma/pgwarden
-org.opencontainers.image.licenses: Proprietary
+org.opencontainers.image.created: <build time>
 ```
 
 ### Health Check
 
+The image's `HEALTHCHECK` runs `pgwarden health`, which prints `ok` when the
+binary starts. It does not check PostgreSQL, S3 or the API. To check that the
+API server answers, probe `/health` instead (as in the Compose example):
+
 ```bash
-# Docker automatically checks:
-pgwarden health
-# Returns: {"status":"ok"}
+wget -qO- http://localhost:8080/health
+# {"status":"ok"}
 ```
 
 ## Development

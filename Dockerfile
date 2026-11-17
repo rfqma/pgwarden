@@ -45,6 +45,9 @@ COPY --from=builder /out/pgwarden /app/pgwarden
 COPY scripts/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh /app/pgwarden
 
+# Lets HEALTHCHECK and `docker exec <container> pgwarden ...` find the binary.
+ENV PATH="/app:${PATH}"
+
 LABEL org.opencontainers.image.title="pgwarden" \
       org.opencontainers.image.description="PostgreSQL backup guardian" \
       org.opencontainers.image.version="${VERSION}" \

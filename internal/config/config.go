@@ -115,13 +115,6 @@ func childEnv(environ []string, password string) []string {
 	return env
 }
 
-func (c *PostgreSQLConfig) DSN() string {
-	return fmt.Sprintf(
-		"host=%s port=%s user=%s password=%s dbname=%s",
-		c.Host, c.Port, c.User, c.Password, c.Database,
-	)
-}
-
 func getEnv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -139,16 +132,4 @@ func getEnvBool(key string, fallback bool) bool {
 		return fallback
 	}
 	return b
-}
-
-func getEnvInt(key string, fallback int) int {
-	v := os.Getenv(key)
-	if v == "" {
-		return fallback
-	}
-	i, err := strconv.Atoi(v)
-	if err != nil {
-		return fallback
-	}
-	return i
 }

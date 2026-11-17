@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -15,15 +14,6 @@ import (
 
 	s3config "github.com/maruarchive/pgwarden/internal/config"
 )
-
-type BackupMetadata struct {
-	ID        string    `json:"id"`
-	Size      int64     `json:"size"`
-	Status    string    `json:"status"`
-	Error     string    `json:"error,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	Duration  string    `json:"duration,omitempty"`
-}
 
 // endpointURL turns S3_ENDPOINT into the URL the client calls. A bare host
 // takes its scheme from S3_USE_SSL, so a local S3 server without TLS can be
